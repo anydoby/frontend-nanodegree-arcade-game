@@ -95,8 +95,9 @@ var Engine = (function(global) {
       renderables.forEach(function(other) {
         if (thiz !== other && 
             thiz.constructor !== other.constructor && 
-            thiz.collidesWith(other)) {
-          console.log(thiz.name + ' collides with ' + other.name);
+            thiz.collidesWith(other)) {          
+            console.log(thiz.name + " collides with " + other.name);
+            thiz.onCollision(other);
         }
       });
     });
