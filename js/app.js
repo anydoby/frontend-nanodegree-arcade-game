@@ -1,25 +1,41 @@
+/*
+ * constants
+ */
 DEBUG = false; // to debug collision boxes and other stuff enable
 MIN_ENEMY_SPEED = 100; // the minimum speed an enemy can have
-ENEMY_SPEED_ENTROPY = 100; // additional random surplus to an enemy speed it
-// gets at spawn time
-FIRST_ROW_Y = 75; // where the first row of bricks starts
-ROW_HEIGHT = 83; // height of a brick road block
+/*
+ * additional random surplus to an enemy speed it gets at spawn time (when he is
+ * created at the beginning of the road)
+ */
+
+ENEMY_SPEED_ENTROPY = 100;
+// where the first row of bricks starts
+FIRST_ROW_Y = 75;
+// height of a brick road block
+ROW_HEIGHT = 83;
 // this is a carefully picked amount of initial acceleration the player has
 MAX_ACCELERATION = 30;
 // maximum speed of the hero
 MAX_PLAYER_SPEED = 50;
-// number of pixels the new heart will be offset by x axis relative to another
-// heart
+/*
+ * number of pixels the new heart will be offset on the x axis relative to
+ * another heart
+ */
 HEART_OFFSET = 20;
 // number of bands per pixel of image data
 BANDS = 4;
 // index of the alpha channel of an image
 ALPHA = 3;
+// initial x position of the hero
 PLAYER_STARTX = 200;
+// initial y position of the hero
 PLAYER_STARTY = 400;
-
+// stores cached image bounds as detected during sprite loading
 var boundsCache = {};
 
+/*
+ * some handy extensions to the basic js array
+ */
 Array.prototype.peek = function() {
   return this[this.length - 1];
 };
@@ -33,7 +49,11 @@ Array.prototype.clear = function() {
   this.length = 0;
 };
 
-var renderables = []; // a list of objects that can interact with each other
+/*
+ * A list of all moving and displayed objects that are able to behave accept
+ * input and collide with each other
+ */
+var renderables = [];
 
 var inactive = function() {
   // a behaviour of an inactive object
@@ -56,13 +76,20 @@ var vanishing = function(dt) {
   }
 };
 
-// a renderable with position and a sprite image
-// you may have renderables without sprite, then please set width and height
-// manually
+/*
+ * a renderable with position and a sprite image. you may have renderables
+ * without sprite, then please set width and height manually if you want to
+ * detect collisions.
+ * 
+ */
 var Renderable = function(x, y, sprite) {
   this.sprite = sprite;
   this.x = x;
   this.y = y;
+  /*
+   * images with transparent pixels around main content will have visibleX and
+   * visibleY different from x and y
+   */
   this.visibleX = x;
   this.visibleY = y;
   this.width = 0;
@@ -84,22 +111,24 @@ var Renderable = function(x, y, sprite) {
   }
 };
 Renderable.prototype.constructor = Renderable;
-Renderable.prototype.update = function(dt) {
-};
+// get another behaviour
 Renderable.prototype.become = function(behaviour) {
   this.behaviours.push(behaviour);
 };
+// move to previous behaviour
 Renderable.prototype.unbecome = function() {
   if (this.behaviours.length != 0) {
     this.behaviours.pop();
   }
 };
+// execute current behaviour
 Renderable.prototype.update = function(dt) {
   this.behaviours.peek().call(this, dt);
 };
+/*
+ * We detect only intersections between bounding boxes of renderables.
+ */
 Renderable.prototype.collidesWith = function(other) {
-  // we detect only intersections between bounding boxes of renderables
-  // if both renderables have sprites we perform dot to dot collision detection
   if (other instanceof Renderable) {
     var tw = this.visibleW;
     var th = this.visibleH;
@@ -157,14 +186,14 @@ function _detectRealBounds(renderable) {
     canvas.height = height;
     var ctx = canvas.getContext('2d');
     ctx.drawImage(Resources.get(renderable.sprite), 0, 0);
-    var darkEnough = function(data) {
-      var a = data[ALPHA];
+    var data = ctx.getImageData(0, 0, width, height).data;
+    var darkEnough = function(data, x, y) {
+      var a = data[(width * y + x) * BANDS + ALPHA];
       return a != 0;
     };
     for (var y = 0; y < height; y++) {
       for (var x = 0; x < width; x++) {
-        var data = ctx.getImageData(x, y, 1, 1).data;
-        if (darkEnough(data)) {
+        if (darkEnough(data, x, y)) {
           minX = Math.min(minX, x);
           maxX = Math.max(x, maxX);
           minY = Math.min(minY, y);
@@ -186,6 +215,7 @@ function _detectRealBounds(renderable) {
   renderable.visibleH = cachedBounds.maxY - cachedBounds.minY;
 };
 
+// represents a life of a hero
 var Heart = function(x) {
   Renderable.call(this, x, -40, 'images/Heart.png');
 };
@@ -203,14 +233,20 @@ var Enemy = function(initialY, sprite) {
 
 Enemy.prototype = Object.create(Renderable.prototype);
 Enemy.prototype.constructor = Enemy;
-// Update the enemy's position, required method for game
-// Parameter: dt, a time delta between ticks
-Enemy.prototype.animations = [ function(dt) {  
+/*
+ * You can add other animations to the enemies. Every time an enemy is reset its
+ * animation is randomly chosen from this list.
+ */
+Enemy.prototype.animations = [
+// straight line movement
+function(dt) {
   this.x += this.speed * dt;
   if (this.x > canvas.width - this.width / 2) {
     this.reset();
   }
-}, function(dt) {
+},
+// wobbling around central y line
+function(dt) {
   if (this.dy) {
     if (this.y < this.initialY - 20) {
       this.dy = 2;
@@ -226,7 +262,9 @@ Enemy.prototype.animations = [ function(dt) {
   if (this.x > canvas.width - this.width / 2) {
     this.reset();
   }
-}, function(dt) {
+},
+// disappearing at times
+function(dt) {
   if (this.alpha >= 1) {
     this.dAlpha = -0.01;
     this.alpha = 1;
@@ -241,15 +279,17 @@ Enemy.prototype.animations = [ function(dt) {
     this.reset();
   }
 } ];
+// moves enemy of the left side of the screen and initializes behaviour
 Enemy.prototype.reset = function() {
   this.unbecome();
   this.alpha = 1;
   this.x = -100;
   this.y = this.initialY;
   this.speed = MIN_ENEMY_SPEED + Math.random() * ENEMY_SPEED_ENTROPY;
-  var animation = this.animations[(Math.random() * this.animations.length) | 0];
-  this.become(animation);
+  var animated = this.animations[(Math.random() * this.animations.length) | 0];
+  this.become(animated);
 };
+// hero will lose live on collision with enemy, if he's still alive
 Enemy.prototype.onCollision = function(object) {
   if (object instanceof Player && object.isAlive()) {
     object.lifeLost();
@@ -263,6 +303,8 @@ var Controlable = function() {
 };
 Controlable.prototype = Object.create(Renderable.prototype);
 Controlable.prototype.constructor = Controlable;
+// direction can be up/down/left/right/space
+// upOfDownInt is 1 for pressed, 0 for released
 Controlable.prototype.handleInput = function(direction, upOrDownInt) {
 };
 
@@ -282,6 +324,7 @@ var Player = function(sprite) {
   this.score = 0;
   this.lives = [];
   this.name = 'player';
+  // add 3 lives
   this.oneUp();
   this.oneUp();
   this.oneUp();
@@ -289,6 +332,7 @@ var Player = function(sprite) {
 };
 Player.prototype = Object.create(Controlable.prototype);
 Player.prototype.constructor = Player;
+// don't let the hero escape the screen
 Player.prototype.ensureImOnScreen = function() {
   if (this.x < 0) {
     this.x = 0;
@@ -303,6 +347,7 @@ Player.prototype.ensureImOnScreen = function() {
     this.y = canvas.height - this.height;
   }
 };
+// allows user to move on the screen in all directions with acceleration
 var movingFreely = function(dt) {
   if (this.dx || this.dy) {
     if (this.speed < MAX_PLAYER_SPEED) {
@@ -319,6 +364,7 @@ var movingFreely = function(dt) {
     this.stop();
   }
 };
+// stops hero
 Player.prototype.stop = function() {
   this.acceleration = 0;
   this.maxAcceleration = MAX_ACCELERATION;
@@ -326,6 +372,7 @@ Player.prototype.stop = function() {
   this.dx = 0;
   this.dy = 0;
 };
+// player rendering displays him, his lives and his score
 Player.prototype.render = function() {
   Renderable.prototype.render.call(this);
   this.lives.forEach(function(life) {
@@ -350,7 +397,7 @@ Player.prototype.oneUp = function() {
   this.lives.push(new Heart(this.lives.length * HEART_OFFSET));
 };
 /*
- * Removes a life
+ * Removes a life or kills him if there are no more lives left
  */
 Player.prototype.lifeLost = function() {
   if (this.isAlive()) {
@@ -382,6 +429,7 @@ Player.prototype.actions = {
   }
 };
 
+// returns hero to the starting position and counts down from 3 to 0
 Player.prototype.returnToStart = function() {
   this.become(inactive);
   this.x = PLAYER_STARTX;
@@ -399,7 +447,7 @@ Player.prototype.returnToStart = function() {
     ctx.restore();
   };
   renderables.push(counter);
-  nextLevelCountDown(counter, this);
+  animateAfterCoundDown(counter, this);
 };
 
 Player.prototype.handleInput = function(direction, pressed) {
@@ -408,6 +456,7 @@ Player.prototype.handleInput = function(direction, pressed) {
   }
 };
 
+// a game over sprite which waits for the space button to start new game
 var GameOver = function() {
   Controlable.call(this);
   Renderable.call(this, 0, 0);
@@ -433,6 +482,9 @@ var GameOver = function() {
 GameOver.prototype = Object.create(Controlable.prototype);
 GameOver.prototype.constructor = GameOver;
 
+/*
+ * When game starts we reset all renderables, add enemies and the player
+ */
 function startGame() {
   renderables.clear();
   // we introduce a fake renderable without a sprite here to detect collisions
@@ -447,6 +499,10 @@ function startGame() {
   renderables.push(player);
 };
 
+/*
+ * Creates a level end marker object which records the player touching the last
+ * line of bricks.
+ */
 function levelEndPlaceholder() {
   var levelEnd = new Renderable(0, 0);
   levelEnd.name = "level-end";
@@ -461,7 +517,10 @@ function levelEndPlaceholder() {
   return levelEnd;
 }
 
-function nextLevelCountDown(counter, player) {
+/*
+ * Counts down to 0 and then the player can move again
+ */
+function animateAfterCoundDown(counter, player) {
   if (counter.count == 0) {
     renderables.remove(counter);
     player.unbecome();
@@ -469,7 +528,7 @@ function nextLevelCountDown(counter, player) {
   } else {
     window.setTimeout(function() {
       counter.count--;
-      nextLevelCountDown(counter, player);
+      animateAfterCoundDown(counter, player);
     }, 1000);
   }
 }

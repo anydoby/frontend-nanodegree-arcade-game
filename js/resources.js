@@ -12,8 +12,8 @@
   /*
    * This is the publicly accessible image loading function. It accepts an array
    * of strings pointing to image files or a string for a single image. It will
-   * then call our private image loading function accordingly. Optionally you may specify a callback that gets notified
-   * when an image is loaded
+   * then call our private image loading function accordingly. Optionally you
+   * may specify a callback that gets notified when an image is loaded
    */
   function load(urlOrArr, callback) {
     if (urlOrArr instanceof Array) {
