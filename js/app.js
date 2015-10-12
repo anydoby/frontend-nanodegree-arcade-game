@@ -1,3 +1,4 @@
+DEBUG = false; // to debug collision boxes and other stuff enable
 MIN_ENEMY_SPEED = 100; // the minimum speed an enemy can have
 ENEMY_SPEED_ENTROPY = 100; // additional random surplus to an enemy speed it
 // gets at spawn time
@@ -16,6 +17,8 @@ BANDS = 4;
 ALPHA = 3;
 PLAYER_STARTX = 200;
 PLAYER_STARTY = 400;
+
+var boundsCache = {};
 
 Array.prototype.peek = function() {
   return this[this.length - 1];
@@ -39,7 +42,8 @@ var inactive = function() {
 // a behaviour of an object that needs to be removed from the screen
 var vanishing = function(dt) {
   if (!this.vanishSpeed) {
-    this.vanishSpeed = (canvas.width - this.x) / 120; // we want to vanish in 2 seconds
+    this.vanishSpeed = (canvas.width - this.x) / 120; // we want to vanish in 2
+    // seconds
     this.alpha = 1;
   }
   if (this.x < canvas.width) {
@@ -65,10 +69,9 @@ var Renderable = function(x, y, sprite) {
   this.height = 0;
   this.visibleW = this.width;
   this.visibleH = this.height;
-  this.calculateBounds = sprite;
   this.behaviours = [];
   this.become(inactive);
-  if (this.calculateBounds) {
+  if (this.sprite) {
     var dis = this;
     Resources.load(sprite, function() {
       var image = Resources.get(sprite);
@@ -76,6 +79,7 @@ var Renderable = function(x, y, sprite) {
       dis.height = image.height;
       dis.visibleW = image.width;
       dis.visibleH = image.height;
+      _detectRealBounds(dis);
     });
   }
 };
@@ -121,55 +125,65 @@ Renderable.prototype.onCollision = function(withOther) {
 Renderable.prototype.render = function() {
   ctx.save();
   /*
-   * renderables without a sprite are just logical elements used for collision detection
+   * renderables without a sprite are just logical elements used for collision
+   * detection
    */
   if (this.sprite) {
-    if (this.calculateBounds) {
-      _detectRealBounds.call(this);
-    }
     if (this.alpha) {
       ctx.globalAlpha = this.alpha;
     }
     ctx.drawImage(Resources.get(this.sprite), this.x, this.y);
   }
-  ctx.translate(this.x, this.y);
-  ctx.strokeStyle = 'red';
-  ctx.strokeRect(this.visibleX, this.visibleY, this.visibleW, this.visibleH);
+  if (DEBUG) {
+    ctx.translate(this.x, this.y);
+    ctx.strokeStyle = 'red';
+    ctx.strokeRect(this.visibleX, this.visibleY, this.visibleW, this.visibleH);
+  }
   ctx.restore();
 };
 /*
- * we can only detect real bounds when image is drawn on a canvas. this method traces the image for darker areas and
- * makes bounds accordingly ignoring transparent pixels.
+ * we can only detect real bounds when image is drawn on a canvas. this method
+ * traces the image for darker areas and makes bounds accordingly ignoring
+ * transparent pixels.
  */
-function _detectRealBounds() {
-  var width = this.width;
-  var height = this.height;
-  var minX = width, minY = height, maxX = 0, maxY = 0;
-  var canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  var ctx = canvas.getContext('2d');
-  ctx.drawImage(Resources.get(this.sprite), 0, 0);
-  var darkEnough = function(data) {
-    var a = data[ALPHA];
-    return a != 0;
-  };
-  for (var y = 0; y < height; y++) {
-    for (var x = 0; x < width; x++) {
-      var data = ctx.getImageData(x, y, 1, 1).data;
-      if (darkEnough(data)) {
-        minX = Math.min(minX, x);
-        maxX = Math.max(x, maxX);
-        minY = Math.min(minY, y);
-        maxY = Math.max(y, maxY);
+function _detectRealBounds(renderable) {
+  var cachedBounds = boundsCache[renderable.sprite];
+  if (!cachedBounds) {
+    var width = renderable.width;
+    var height = renderable.height;
+    var minX = width, minY = height, maxX = 0, maxY = 0;
+    var canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(Resources.get(renderable.sprite), 0, 0);
+    var darkEnough = function(data) {
+      var a = data[ALPHA];
+      return a != 0;
+    };
+    for (var y = 0; y < height; y++) {
+      for (var x = 0; x < width; x++) {
+        var data = ctx.getImageData(x, y, 1, 1).data;
+        if (darkEnough(data)) {
+          minX = Math.min(minX, x);
+          maxX = Math.max(x, maxX);
+          minY = Math.min(minY, y);
+          maxY = Math.max(y, maxY);
+        }
       }
     }
+    cachedBounds = {
+      minX : minX,
+      minY : minY,
+      maxX : maxX,
+      maxY : maxY
+    };
+    boundsCache[renderable.sprite] = cachedBounds;
   }
-  this.visibleX = minX;
-  this.visibleY = minY;
-  this.visibleW = maxX - minX;
-  this.visibleH = maxY - minY;
-  this.calculateBounds = false;
+  renderable.visibleX = cachedBounds.minX;
+  renderable.visibleY = cachedBounds.minY;
+  renderable.visibleW = cachedBounds.maxX - cachedBounds.minX;
+  renderable.visibleH = cachedBounds.maxY - cachedBounds.minY;
 };
 
 var Heart = function(x) {
@@ -182,6 +196,7 @@ Heart.prototype.constructor = Heart;
 var Enemy = function(initialY, sprite) {
   Renderable.call(this, -100, initialY, sprite || 'images/enemy-bug.png');
   this.initialY = initialY;
+  this.alpha = 1;
   this.name = 'enemy';
   this.reset();
 };
@@ -190,10 +205,37 @@ Enemy.prototype = Object.create(Renderable.prototype);
 Enemy.prototype.constructor = Enemy;
 // Update the enemy's position, required method for game
 // Parameter: dt, a time delta between ticks
-Enemy.prototype.animations = [ function(dt) {
-  // You should multiply any movement by the dt parameter
-  // which will ensure the game runs at the same speed for
-  // all computers.
+Enemy.prototype.animations = [ function(dt) {  
+  this.x += this.speed * dt;
+  if (this.x > canvas.width - this.width / 2) {
+    this.reset();
+  }
+}, function(dt) {
+  if (this.dy) {
+    if (this.y < this.initialY - 20) {
+      this.dy = 2;
+    }
+    if (this.y > this.initialY + 20) {
+      this.dy = -2;
+    }
+  } else {
+    this.dy = -2;
+  }
+  this.x += this.speed * dt;
+  this.y += this.dy;
+  if (this.x > canvas.width - this.width / 2) {
+    this.reset();
+  }
+}, function(dt) {
+  if (this.alpha >= 1) {
+    this.dAlpha = -0.01;
+    this.alpha = 1;
+  }
+  if (this.alpha <= 0.05) {
+    this.alpha = 0.05;
+    this.dAlpha = 0.01;
+  }
+  this.alpha += this.dAlpha;
   this.x += this.speed * dt;
   if (this.x > canvas.width - this.width / 2) {
     this.reset();
@@ -201,6 +243,7 @@ Enemy.prototype.animations = [ function(dt) {
 } ];
 Enemy.prototype.reset = function() {
   this.unbecome();
+  this.alpha = 1;
   this.x = -100;
   this.y = this.initialY;
   this.speed = MIN_ENEMY_SPEED + Math.random() * ENEMY_SPEED_ENTROPY;
@@ -298,7 +341,7 @@ Player.prototype.render = function() {
   ctx.restore();
 };
 Player.prototype.isAlive = function() {
-  return lives.length > 0;
+  return this.lives.length > 0;
 };
 /*
  * Adds a life
@@ -319,10 +362,11 @@ Player.prototype.lifeLost = function() {
     } else {
       // deanimate hero
       this.handleInput = inactive;
-      renderables.push(gameOver());
+      renderables.push(new GameOver());
     }
   }
 };
+
 Player.prototype.actions = {
   "up" : function(pressed) {
     this.dy = -pressed;
@@ -337,6 +381,7 @@ Player.prototype.actions = {
     this.dx = pressed;
   }
 };
+
 Player.prototype.returnToStart = function() {
   this.become(inactive);
   this.x = PLAYER_STARTX;
@@ -345,20 +390,48 @@ Player.prototype.returnToStart = function() {
   counter.count = 3;
   counter.render = function() {
     ctx.save();
-    ctx.font = "3em Arial";
+    ctx.font = "10em Arial";
     ctx.fillStyle = "white";
+    ctx.strokeStyle = "black";
     ctx.textAlign = "center";
     ctx.fillText(counter.count, canvas.width / 2, canvas.height / 2);
+    ctx.strokeText(counter.count, canvas.width / 2, canvas.height / 2);
     ctx.restore();
   };
   renderables.push(counter);
   nextLevelCountDown(counter, this);
 };
+
 Player.prototype.handleInput = function(direction, pressed) {
-  if (direction) {
+  if (this.actions[direction] && this.isAlive()) {
     this.actions[direction].call(this, pressed);
   }
 };
+
+var GameOver = function() {
+  Controlable.call(this);
+  Renderable.call(this, 0, 0);
+  this.render = function() {
+    ctx.save();
+    ctx.font = "4em Arial";
+    ctx.strokeStyle = "black";
+    ctx.fillStyle = "white";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2);
+    ctx.strokeText("GAME OVER", canvas.width / 2, canvas.height / 2);
+    ctx.font = "2em Arial";
+    ctx.fillText("(press space)", canvas.width / 2, canvas.height / 2 + 40);
+    ctx.strokeText("(press space)", canvas.width / 2, canvas.height / 2 + 40);
+    ctx.restore();
+  };
+  this.handleInput = function(key) {
+    if (key == 'space') {
+      startGame();
+    }
+  };
+};
+GameOver.prototype = Object.create(Controlable.prototype);
+GameOver.prototype.constructor = GameOver;
 
 function startGame() {
   renderables.clear();
@@ -386,19 +459,6 @@ function levelEndPlaceholder() {
     }
   };
   return levelEnd;
-}
-
-function gameOver() {
-  var go = new Renderable(0, 0);
-  go.render = function() {
-    ctx.save();
-    ctx.font = "4em Arial";
-    ctx.fillStyle = "white";
-    ctx.textAlign = "center";
-    ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2);
-    ctx.restore();
-  };
-  return go;
 }
 
 function nextLevelCountDown(counter, player) {
