@@ -318,22 +318,27 @@ function handleInput(e, upOrDown) {
 }
 
 function startGame() {
+  renderables.split();
   // we introduce a fake renderable without a sprite here to detect collisions
   // with the level target - the other side of the road
   // in a real game with different layers we would of course have a real object
   // like a door or a gateway to the next level.
-  var levelEnd = new Renderable(0, 0);
-  levelEnd.name = "level-end";
-  levelEnd.boxW = canvas.width;
-  levelEnd.boxH = 60;
-  levelEnd.onCollision = levelReached;
-  renderables.push(levelEnd);
+  renderables.push(levelEnd());
   for (var row = 0; row < 3; row++) {
     renderables.push(new Enemy(FIRST_ROW_Y + row * ROW_HEIGHT));
   }
   var player = new Player('images/char-boy.png');
   renderables.push(player);
 };
+
+function levelEnd(){
+  var levelEnd = new Renderable(0, 0);
+  levelEnd.name = "level-end";
+  levelEnd.boxW = canvas.width;
+  levelEnd.boxH = 60;
+  levelEnd.onCollision = levelReached;
+  return levelEnd;
+}
 
 var levelReached = function(player) {
   player.score += 10;
