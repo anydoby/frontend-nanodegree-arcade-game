@@ -66,6 +66,31 @@ var Engine = (function(global) {
     main();
   }
 
+  var allowedKeys = {
+    37 : 'left',
+    38 : 'up',
+    39 : 'right',
+    40 : 'down'
+  };
+
+  doc.addEventListener('keyup', function(e) {
+    handleInput(e, 0);
+  });
+  doc.addEventListener('keydown', function(e) {
+    handleInput(e, 1);
+  });
+
+  /*
+   * Traverses renderables and invokes handleInput on Controlable's.
+   */
+  function handleInput(e, upOrDown) {
+    renderables.forEach(function(r) {
+      if (r instanceof Controlable) {
+        r.handleInput(allowedKeys[e.keyCode], upOrDown);
+      }
+    });
+  }
+
   /*
    * This function is called by main (our game loop) and itself calls all of the functions which may need to update
    * entity's data. Based on how you implement your collision detection (when two entities occupy the same space, for
@@ -93,11 +118,9 @@ var Engine = (function(global) {
   function checkCollisions() {
     renderables.forEach(function(thiz) {
       renderables.forEach(function(other) {
-        if (thiz !== other && 
-            thiz.constructor !== other.constructor && 
-            thiz.collidesWith(other)) {          
-            console.log(thiz.name + " collides with " + other.name);
-            thiz.onCollision(other);
+        if (thiz !== other && thiz.constructor !== other.constructor && thiz.collidesWith(other)) {
+          console.log(thiz.name + " collides with " + other.name);
+          thiz.onCollision(other);
         }
       });
     });

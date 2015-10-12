@@ -1,9 +1,3 @@
-Array.prototype.peek = function() {
-  return this[this.length - 1];
-}
-var renderables = []; // a list of objects that can interact with each other
-var inactive = function() {
-}; // a behaviour of an inactive object
 MIN_ENEMY_SPEED = 100; // the minimum speed an enemy can have
 ENEMY_SPEED_ENTROPY = 100; // additional random surplus to an enemy speed it
 // gets at spawn time
@@ -23,6 +17,41 @@ ALPHA = 3;
 PLAYER_STARTX = 200;
 PLAYER_STARTY = 400;
 
+Array.prototype.peek = function() {
+  return this[this.length - 1];
+};
+Array.prototype.remove = function(object) {
+  var index = this.indexOf(object);
+  if (index != -1) {
+    this.splice(index, 1);
+  }
+}
+Array.prototype.clear = function() {
+  this.length = 0;
+};
+
+var renderables = []; // a list of objects that can interact with each other
+
+var inactive = function() {
+  // a behaviour of an inactive object
+};
+
+// a behaviour of an object that needs to be removed from the screen
+var vanishing = function(dt) {
+  if (!this.vanishSpeed) {
+    this.vanishSpeed = (canvas.width - this.x) / 120; // we want to vanish in 2 seconds
+    this.alpha = 1;
+  }
+  if (this.x < canvas.width) {
+    this.x += this.vanishSpeed;
+    if (this.alpha > 0.1) {
+      this.alpha -= 0.01;
+    }
+  } else {
+    renderables.remove(this);
+  }
+};
+
 // a renderable with position and a sprite image
 // you may have renderables without sprite, then please set width and height
 // manually
@@ -30,23 +59,23 @@ var Renderable = function(x, y, sprite) {
   this.sprite = sprite;
   this.x = x;
   this.y = y;
-  this.boxX = 0;
-  this.boxY = 0;
+  this.visibleX = x;
+  this.visibleY = y;
   this.width = 0;
   this.height = 0;
-  this.boxW = this.width;
-  this.boxH = this.height;
+  this.visibleW = this.width;
+  this.visibleH = this.height;
   this.calculateBounds = sprite;
   this.behaviours = [];
   this.become(inactive);
-  if (sprite) {
+  if (this.calculateBounds) {
     var dis = this;
     Resources.load(sprite, function() {
       var image = Resources.get(sprite);
       dis.width = image.width;
       dis.height = image.height;
-      dis.boxW = image.width;
-      dis.boxH = image.height;
+      dis.visibleW = image.width;
+      dis.visibleH = image.height;
     });
   }
 };
@@ -57,7 +86,9 @@ Renderable.prototype.become = function(behaviour) {
   this.behaviours.push(behaviour);
 };
 Renderable.prototype.unbecome = function() {
-  this.behaviours.pop();
+  if (this.behaviours.length != 0) {
+    this.behaviours.pop();
+  }
 };
 Renderable.prototype.update = function(dt) {
   this.behaviours.peek().call(this, dt);
@@ -66,43 +97,49 @@ Renderable.prototype.collidesWith = function(other) {
   // we detect only intersections between bounding boxes of renderables
   // if both renderables have sprites we perform dot to dot collision detection
   if (other instanceof Renderable) {
-    var w = this.boxW;
-    var h = this.boxH;
-    var x = this.x + this.boxX;
-    var y = this.y + this.boxY;
-    var X = other.x + other.boxX;
-    var Y = other.y + other.boxY;
-    var W = other.boxW;
-    var H = other.boxH;
-    if (w <= 0 || H <= 0 || w <= 0 || H <= 0) {
+    var tw = this.visibleW;
+    var th = this.visibleH;
+    var rw = other.visibleW;
+    var rh = other.visibleH;
+    if (rw <= 0 || rh <= 0 || tw <= 0 || th <= 0) {
       return false;
     }
-    W += X;
-    H += Y;
-    w += x;
-    h += y;
-    var collides = ((W < X || W > x) && (H < Y || H > y) && (w < x || w > X) && (h < y || h > Y));
-    return collides;
+    var tx = this.x + this.visibleX;
+    var ty = this.y + this.visibleY;
+    var rx = other.x + other.visibleX;
+    var ry = other.y + other.visibleY;
+    rw += rx;
+    rh += ry;
+    tw += tx;
+    th += ty;
+    // overflow || intersect
+    return ((rw < rx || rw > tx) && (rh < ry || rh > ty) && (tw < tx || tw > rx) && (th < ty || th > ry));
   }
 }
 Renderable.prototype.onCollision = function(withOther) {
 };
 Renderable.prototype.render = function() {
+  ctx.save();
   /*
-   * renderables without a sprite are just logical elements used for collision
-   * detection
+   * renderables without a sprite are just logical elements used for collision detection
    */
   if (this.sprite) {
     if (this.calculateBounds) {
       _detectRealBounds.call(this);
     }
+    if (this.alpha) {
+      ctx.globalAlpha = this.alpha;
+    }
     ctx.drawImage(Resources.get(this.sprite), this.x, this.y);
   }
+  ctx.translate(this.x, this.y);
+  ctx.strokeStyle = 'red';
+  ctx.strokeRect(this.visibleX, this.visibleY, this.visibleW, this.visibleH);
+  ctx.restore();
 };
 /*
- * we can only detect real bounds when image is drawn on a canvas. this method
- * traces the image for darker areas and makes bounds accordingly ignoring
- * transparent pixels.
+ * we can only detect real bounds when image is drawn on a canvas. this method traces the image for darker areas and
+ * makes bounds accordingly ignoring transparent pixels.
  */
 function _detectRealBounds() {
   var width = this.width;
@@ -113,21 +150,14 @@ function _detectRealBounds() {
   canvas.height = height;
   var ctx = canvas.getContext('2d');
   ctx.drawImage(Resources.get(this.sprite), 0, 0);
-  var data = ctx.getImageData(0, 0, width, height).data;
-  var darkEnough = function(x, y) {
-    var r = data[y * x * BANDS + 0];
-    var g = data[y * x * BANDS + 1];
-    var b = data[y * x * BANDS + 2];
-    var a = data[y * x * BANDS + ALPHA];
-    if (a == 255) {
-      var avg = (r + g + b) / 3;
-      return avg > 128;
-    }
-    return false;
+  var darkEnough = function(data) {
+    var a = data[ALPHA];
+    return a != 0;
   };
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
-      if (darkEnough(x, y)) {
+      var data = ctx.getImageData(x, y, 1, 1).data;
+      if (darkEnough(data)) {
         minX = Math.min(minX, x);
         maxX = Math.max(x, maxX);
         minY = Math.min(minY, y);
@@ -135,10 +165,10 @@ function _detectRealBounds() {
       }
     }
   }
-  this.boxX = minX * 1.2;
-  this.boxY = minY * 1.2;
-  this.boxW = maxX - minX;
-  this.boxH = maxY - minY;
+  this.visibleX = minX;
+  this.visibleY = minY;
+  this.visibleW = maxX - minX;
+  this.visibleH = maxY - minY;
   this.calculateBounds = false;
 };
 
@@ -149,37 +179,38 @@ Heart.prototype = Object.create(Renderable.prototype);
 Heart.prototype.constructor = Heart;
 
 // Enemies our player must avoid
-var Enemy = function(y, sprite) {
-  Renderable.call(this, -100, y, sprite || 'images/enemy-bug.png');
-  this.speed = MIN_ENEMY_SPEED + Math.random() * ENEMY_SPEED_ENTROPY;
-  this.initialY = y;
+var Enemy = function(initialY, sprite) {
+  Renderable.call(this, -100, initialY, sprite || 'images/enemy-bug.png');
+  this.initialY = initialY;
   this.name = 'enemy';
+  this.reset();
 };
 
 Enemy.prototype = Object.create(Renderable.prototype);
 Enemy.prototype.constructor = Enemy;
 // Update the enemy's position, required method for game
 // Parameter: dt, a time delta between ticks
-Enemy.prototype.update = function(dt) {
+Enemy.prototype.animations = [ function(dt) {
   // You should multiply any movement by the dt parameter
   // which will ensure the game runs at the same speed for
   // all computers.
   this.x += this.speed * dt;
   if (this.x > canvas.width - this.width / 2) {
-    this.die();
+    this.reset();
   }
+} ];
+Enemy.prototype.reset = function() {
+  this.unbecome();
+  this.x = -100;
+  this.y = this.initialY;
+  this.speed = MIN_ENEMY_SPEED + Math.random() * ENEMY_SPEED_ENTROPY;
+  var animation = this.animations[(Math.random() * this.animations.length) | 0];
+  this.become(animation);
 };
-
-Enemy.prototype.die = function() {
-  renderables.splice(renderables.indexOf(this), 1);
-  spawnEnemy(this.initialY);
-};
-
-/*
- * Creates a new enemy at the specified row
- */
-function spawnEnemy(y) {
-  renderables.push(new Enemy(y));
+Enemy.prototype.onCollision = function(object) {
+  if (object instanceof Player && object.isAlive()) {
+    object.lifeLost();
+  }
 }
 
 /*
@@ -199,6 +230,7 @@ var Player = function(sprite) {
   Controlable.call(this);
   Renderable.call(this, PLAYER_STARTX, PLAYER_STARTY, sprite);
   this.acceleration = 0;
+  this.alive = true;
   this.maxAcceleration = MAX_ACCELERATION;
   this.speed = 0;
   this.score = 0;
@@ -210,6 +242,7 @@ var Player = function(sprite) {
   this.oneUp();
   this.oneUp();
   this.oneUp();
+  this.become(movingFreely);
 };
 Player.prototype = Object.create(Controlable.prototype);
 Player.prototype.constructor = Player;
@@ -217,8 +250,8 @@ Player.prototype.ensureImOnScreen = function() {
   if (this.x < 0) {
     this.x = 0;
   }
-  if (this.y < -10) {
-    this.y = -10;
+  if (this.y < -20) {
+    this.y = -20;
   }
   if (this.x + this.width > canvas.width) {
     this.x = canvas.width - this.width;
@@ -227,8 +260,7 @@ Player.prototype.ensureImOnScreen = function() {
     this.y = canvas.height - this.height;
   }
 };
-
-Player.prototype.update = function(dt) {
+var movingFreely = function(dt) {
   if (this.dx || this.dy) {
     if (this.speed < MAX_PLAYER_SPEED) {
       this.acceleration += dt * this.maxAcceleration;
@@ -254,7 +286,7 @@ Player.prototype.stop = function() {
 Player.prototype.render = function() {
   Renderable.prototype.render.call(this);
   this.lives.forEach(function(life) {
-    life.render()
+    life.render();
   });
   ctx.save();
   ctx.font = "3em Arial";
@@ -265,11 +297,31 @@ Player.prototype.render = function() {
   ctx.strokeText(this.score, canvas.width, 45);
   ctx.restore();
 };
+Player.prototype.isAlive = function() {
+  return lives.length > 0;
+};
 /*
  * Adds a life
  */
 Player.prototype.oneUp = function() {
   this.lives.push(new Heart(this.lives.length * HEART_OFFSET));
+};
+/*
+ * Removes a life
+ */
+Player.prototype.lifeLost = function() {
+  if (this.isAlive()) {
+    var lostLife = this.lives.pop();
+    renderables.push(lostLife);
+    lostLife.become(vanishing);
+    if (this.isAlive()) {
+      this.returnToStart();
+    } else {
+      // deanimate hero
+      this.handleInput = inactive;
+      renderables.push(gameOver());
+    }
+  }
 };
 Player.prototype.actions = {
   "up" : function(pressed) {
@@ -285,45 +337,36 @@ Player.prototype.actions = {
     this.dx = pressed;
   }
 };
-
+Player.prototype.returnToStart = function() {
+  this.become(inactive);
+  this.x = PLAYER_STARTX;
+  this.y = PLAYER_STARTY;
+  var counter = new Renderable(0, 0);
+  counter.count = 3;
+  counter.render = function() {
+    ctx.save();
+    ctx.font = "3em Arial";
+    ctx.fillStyle = "white";
+    ctx.textAlign = "center";
+    ctx.fillText(counter.count, canvas.width / 2, canvas.height / 2);
+    ctx.restore();
+  };
+  renderables.push(counter);
+  nextLevelCountDown(counter, this);
+};
 Player.prototype.handleInput = function(direction, pressed) {
   if (direction) {
     this.actions[direction].call(this, pressed);
   }
-}
-
-var allowedKeys = {
-  37 : 'left',
-  38 : 'up',
-  39 : 'right',
-  40 : 'down'
 };
 
-document.addEventListener('keyup', function(e) {
-  handleInput(e, 0);
-});
-document.addEventListener('keydown', function(e) {
-  handleInput(e, 1);
-});
-
-/*
- * Traverses renderables and invokes handleInput on Controlable's.
- */
-function handleInput(e, upOrDown) {
-  renderables.forEach(function(r) {
-    if (r instanceof Controlable) {
-      r.handleInput(allowedKeys[e.keyCode], upOrDown);
-    }
-  });
-}
-
 function startGame() {
-  renderables.split();
+  renderables.clear();
   // we introduce a fake renderable without a sprite here to detect collisions
   // with the level target - the other side of the road
   // in a real game with different layers we would of course have a real object
   // like a door or a gateway to the next level.
-  renderables.push(levelEnd());
+  renderables.push(levelEndPlaceholder());
   for (var row = 0; row < 3; row++) {
     renderables.push(new Enemy(FIRST_ROW_Y + row * ROW_HEIGHT));
   }
@@ -331,18 +374,42 @@ function startGame() {
   renderables.push(player);
 };
 
-function levelEnd(){
+function levelEndPlaceholder() {
   var levelEnd = new Renderable(0, 0);
   levelEnd.name = "level-end";
-  levelEnd.boxW = canvas.width;
-  levelEnd.boxH = 60;
-  levelEnd.onCollision = levelReached;
+  levelEnd.visibleW = canvas.width;
+  levelEnd.visibleH = ROW_HEIGHT * (2 / 3);
+  levelEnd.onCollision = function(object) {
+    if (object instanceof Player && object.isAlive()) {
+      object.score += 10;
+      object.returnToStart();
+    }
+  };
   return levelEnd;
 }
 
-var levelReached = function(player) {
-  player.score += 10;
-  player.stop();
-  player.x = PLAYER_STARTX;
-  player.y = PLAYER_STARTY;
-};
+function gameOver() {
+  var go = new Renderable(0, 0);
+  go.render = function() {
+    ctx.save();
+    ctx.font = "4em Arial";
+    ctx.fillStyle = "white";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2);
+    ctx.restore();
+  };
+  return go;
+}
+
+function nextLevelCountDown(counter, player) {
+  if (counter.count == 0) {
+    renderables.remove(counter);
+    player.unbecome();
+    player.become(movingFreely);
+  } else {
+    window.setTimeout(function() {
+      counter.count--;
+      nextLevelCountDown(counter, player);
+    }, 1000);
+  }
+}

@@ -25,7 +25,7 @@
         _load(url, callback);
       });
     } else {
-      if (callback){        
+      if (callback) {
         readyCallbacks.push(callback);
       }
       /*
